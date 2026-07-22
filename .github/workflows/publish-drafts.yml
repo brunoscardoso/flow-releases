@@ -1,0 +1,32 @@
+# Scheduled draft publisher — releases go public at a FIXED neutral slot
+# (weekdays 12:00 UTC = 09:00 São Paulo), so the public timestamp reveals the
+# schedule, never working hours. `npm run ship -- --defer` leaves the release
+# as a draft; this flips the oldest draft, normalizes latest-mac.yml's
+# releaseDate to the slot, and republishes the feed file.
+name: publish-drafts
+on:
+  schedule:
+    - cron: '0 12 * * 1-5'
+  workflow_dispatch: {}
+permissions:
+  contents: write
+jobs:
+  publish:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Publish oldest draft at the slot
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          GH_REPO: ${{ github.repository }}
+        run: |
+          set -euo pipefail
+          draft_tag=$(gh api "repos/$GH_REPO/releases" --jq '[.[] | select(.draft)] | sort_by(.created_at) | .[0].tag_name // empty')
+          if [ -z "$draft_tag" ]; then echo "no drafts pending"; exit 0; fi
+          echo "publishing $draft_tag"
+          gh release download "$draft_tag" -p 'latest-mac.yml' --clobber || true
+          if [ -f latest-mac.yml ]; then
+            slot=$(date -u +%Y-%m-%dT12:00:00.000Z)
+            sed -i "s/releaseDate: '.*'/releaseDate: '$slot'/" latest-mac.yml
+            gh release upload "$draft_tag" latest-mac.yml --clobber
+          fi
+          gh release edit "$draft_tag" --draft=false --latest
